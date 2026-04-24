@@ -56,17 +56,14 @@ def call_analyze(resume_text, file_name):
     finally:
         cur.close()
 
-# 🔥 FIXED PDF FUNCTION
 def extract_pdf_text(file_bytes: bytes) -> str:
     try:
         reader = PdfReader(io.BytesIO(file_bytes))
         text = ""
-
         for page in reader.pages:
             page_text = page.extract_text()
             if page_text is not None:
                 text += str(page_text) + "\n"
-
         return text if text else ""
     except Exception as e:
         return ""
@@ -98,93 +95,89 @@ with tab_analyze:
             file_name = uploaded.name
             try:
                 resume_text = extract_pdf_text(uploaded.getvalue())
-
                 if resume_text:
                     st.success(f"Extracted {len(resume_text)} characters from {uploaded.name}")
                     with st.expander("Preview extracted text"):
                         st.text(resume_text[:2000] + ("..." if len(resume_text) > 2000 else ""))
                 else:
                     st.warning("No readable text found in PDF")
-
             except Exception as e:
                 st.error(f"PDF parse error: {e}")
 
     if st.button("🚀 Analyze Resume", type="primary"):
-        if not resume_text or not str(resume_text).strip():
-        st.warning("Please provide resume text")
-    else:
-        with st.spinner("AI is analyzing..."):
-            try:
-                result = call_analyze(resume_text, file_name)
+        if not resume_text or not str(resume_text).strip():  # FIX 1: corrected indentation
+            st.warning("Please provide resume text")
+        else:
+            with st.spinner("AI is analyzing..."):
+                try:
+                    result = call_analyze(resume_text, file_name)
+                    if result is None:
+                        result = {}
+                    st.session_state["last_analysis"] = result
+                    st.success("Analysis complete!")
+                except Exception as e:
+                    st.error(f"Error: {e}")
 
-                if result is None:
-                    result = {}
-
-                st.session_state["last_analysis"] = result
-                st.success("Analysis complete!")
-
-            except Exception as e:
-                st.error(f"Error: {e}")
     # Render results
-    if "last_analysis" in st.session_state:
-    a = st.session_state["last_analysis"]
+    if "last_analysis" in st.session_state:  # FIX 2: corrected indentation
+        a = st.session_state["last_analysis"]
 
-    if not a or not isinstance(a, dict):
-        st.error("No valid analysis data received")
-    else:
-        if isinstance(a, str):
-            a = json.loads(a)
+        if not a or not isinstance(a, dict):
+            st.error("No valid analysis data received")
+        else:
+            if isinstance(a, str):
+                a = json.loads(a)
 
-        st.divider()
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Candidate", a.get("name", "N/A"))
-        c2.metric("Experience", a.get("experience_level", "N/A"))
-        c3.metric("Skills found", len(a.get("skills", [])))
+            st.divider()
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Candidate", a.get("name", "N/A"))
+            c2.metric("Experience", a.get("experience_level", "N/A"))
+            c3.metric("Skills found", len(a.get("skills", [])))
 
-        st.subheader("🎯 Recommended Roles")
-        for r in a.get("recommended_roles", []):
-            score_str = str(r.get("match_score", "0")).replace("%", "").strip()
-            try:
-                score = int(float(score_str))
-            except:
-                score = 0
-            st.progress(min(max(score, 0), 100) / 100,
-                        text=f"**{r.get('role')}** — {r.get('match_score')}")
+            st.subheader("🎯 Recommended Roles")
+            for r in a.get("recommended_roles", []):
+                score_str = str(r.get("match_score", "0")).replace("%", "").strip()
+                try:
+                    score = int(float(score_str))
+                except:
+                    score = 0
+                st.progress(min(max(score, 0), 100) / 100,
+                            text=f"**{r.get('role')}** — {r.get('match_score')}")
 
-        col_a, col_b = st.columns(2)
-        with col_a:
-            st.subheader("💪 Strengths")
-            for s in a.get("strengths", []):
-                st.write(f"- {s}")
-            st.subheader("🛠️ Skills")
-            st.write(", ".join(a.get("skills", [])))
-            st.subheader("🏅 Certifications")
-            for c in a.get("certifications", []):
-                st.write(f"- {c}")
-        with col_b:
-            st.subheader("⚠️ Weaknesses / Improvements")
-            for w in a.get("weaknesses", []):
-                st.write(f"- {w}")
-            st.subheader("📂 Key Projects")
-            for p in a.get("key_projects", []):
-                st.write(f"- {p}")
+            col_a, col_b = st.columns(2)
+            with col_a:
+                st.subheader("💪 Strengths")
+                for s in a.get("strengths", []):
+                    st.write(f"- {s}")
+                st.subheader("🛠️ Skills")
+                st.write(", ".join(a.get("skills", [])))
+                st.subheader("🏅 Certifications")
+                for c in a.get("certifications", []):
+                    st.write(f"- {c}")
+            with col_b:
+                st.subheader("⚠️ Weaknesses / Improvements")
+                for w in a.get("weaknesses", []):
+                    st.write(f"- {w}")
+                st.subheader("📂 Key Projects")
+                for p in a.get("key_projects", []):
+                    st.write(f"- {p}")
 
-        st.subheader("❓ Interview Questions")
-        q1, q2 = st.columns(2)
-        with q1:
-            st.markdown("**Technical**")
-            for q in a.get("interview_questions", {}).get("technical", []):
-                st.write(f"- {q}")
-        with q2:
-            st.markdown("**HR**")
-            for q in a.get("interview_questions", {}).get("hr", []):
-                st.write(f"- {q}")
+            st.subheader("❓ Interview Questions")
+            q1, q2 = st.columns(2)
+            with q1:
+                st.markdown("**Technical**")
+                for q in a.get("interview_questions", {}).get("technical", []):
+                    st.write(f"- {q}")
+            with q2:
+                st.markdown("**HR**")
+                for q in a.get("interview_questions", {}).get("hr", []):
+                    st.write(f"- {q}")
 
-        st.subheader("📝 Final Evaluation Summary")
-        st.info(a.get("summary", ""))
+            st.subheader("📝 Final Evaluation Summary")
+            st.info(a.get("summary", ""))
 
-        with st.expander("🔎 Raw JSON"):
-            st.json(a)
+            with st.expander("🔎 Raw JSON"):
+                st.json(a)
 
 # ---------------- TAB 2 ----------------
 with tab_past:
