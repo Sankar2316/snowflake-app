@@ -56,9 +56,20 @@ def call_analyze(resume_text, file_name):
     finally:
         cur.close()
 
+# 🔥 FIXED PDF FUNCTION
 def extract_pdf_text(file_bytes: bytes) -> str:
     reader = PdfReader(io.BytesIO(file_bytes))
-    return "\n".join((p.extract_text() or "") for p in reader.pages)
+    text = ""
+
+    for page in reader.pages:
+        try:
+            page_text = page.extract_text()
+            if page_text:
+                text += page_text + "\n"
+        except:
+            pass
+
+    return text
 
 # ----------------------------------------------------------------------
 # UI
@@ -87,13 +98,22 @@ with tab_analyze:
             file_name = uploaded.name
             try:
                 resume_text = extract_pdf_text(uploaded.getvalue())
-                st.success(f"Extracted {len(resume_text)} characters from {uploaded.name}")
-                with st.expander("Preview extracted text"):
-                    st.text(resume_text[:2000] + ("..." if len(resume_text) > 2000 else ""))
+
+                if resume_text:
+                    st.success(f"Extracted {len(resume_text)} characters from {uploaded.name}")
+                    with st.expander("Preview extracted text"):
+                        st.text(resume_text[:2000] + ("..." if len(resume_text) > 2000 else ""))
+                else:
+                    st.warning("No readable text found in PDF")
+
             except Exception as e:
                 st.error(f"PDF parse error: {e}")
 
-    if st.button("🚀 Analyze Resume", type="primary", disabled=not resume_text.strip()):
+    if st.button(
+        "🚀 Analyze Resume",
+        type="primary",
+        disabled=not resume_text or not resume_text.strip()
+    ):
         with st.spinner("AI is analyzing..."):
             try:
                 result = call_analyze(resume_text, file_name)
@@ -119,7 +139,7 @@ with tab_analyze:
             score_str = str(r.get("match_score", "0")).replace("%", "").strip()
             try:
                 score = int(float(score_str))
-            except ValueError:
+            except:
                 score = 0
             st.progress(min(max(score, 0), 100) / 100,
                         text=f"**{r.get('role')}** — {r.get('match_score')}")
@@ -159,7 +179,7 @@ with tab_analyze:
         with st.expander("🔎 Raw JSON"):
             st.json(a)
 
-# ---------------- TAB 2: Past analyses ----------------
+# ---------------- TAB 2 ----------------
 with tab_past:
     st.subheader("Past resume analyses")
     try:
@@ -173,7 +193,7 @@ with tab_past:
     except Exception as e:
         st.error(f"Error loading past analyses: {e}")
 
-# ---------------- TAB 3: Dashboard ----------------
+# ---------------- TAB 3 ----------------
 with tab_dash:
     st.subheader("Candidate analytics")
     try:
@@ -182,34 +202,11 @@ with tab_dash:
         st.metric("Total resumes analyzed", total)
 
         if total > 0:
-            st.markdown("**Experience level distribution**")
             exp_df = run_query("""
                 SELECT experience_level, COUNT(*) AS cnt
                 FROM RESUME_ANALYTICS.PUBLIC.RESUME_ANALYSIS
                 GROUP BY experience_level
             """)
             st.bar_chart(exp_df.set_index("EXPERIENCE_LEVEL"))
-
-            st.markdown("**Top skills**")
-            skill_df = run_query("""
-                SELECT s.value::STRING AS skill, COUNT(*) AS cnt
-                FROM RESUME_ANALYTICS.PUBLIC.RESUME_ANALYSIS,
-                     LATERAL FLATTEN(input => skills) s
-                GROUP BY skill
-                ORDER BY cnt DESC
-                LIMIT 20
-            """)
-            st.bar_chart(skill_df.set_index("SKILL"))
-
-            st.markdown("**Top recommended roles**")
-            role_df = run_query("""
-                SELECT r.value:role::STRING AS role, COUNT(*) AS cnt
-                FROM RESUME_ANALYTICS.PUBLIC.RESUME_ANALYSIS,
-                     LATERAL FLATTEN(input => recommended_roles) r
-                GROUP BY role
-                ORDER BY cnt DESC
-                LIMIT 10
-            """)
-            st.bar_chart(role_df.set_index("ROLE"))
     except Exception as e:
         st.error(f"Dashboard error: {e}")
