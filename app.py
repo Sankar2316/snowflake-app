@@ -59,13 +59,17 @@ def call_analyze(resume_text, file_name):
 def extract_pdf_text(file_bytes: bytes) -> str:
     try:
         reader = PdfReader(io.BytesIO(file_bytes))
-        text = ""
-        for page in reader.pages:
-            page_text = page.extract_text()
-            if page_text is not None:
-                text += str(page_text) + "\n"
-        return text if text else ""
+        pages_text = []
+        for i, page in enumerate(reader.pages):
+            try:
+                page_text = page.extract_text() or ""
+                if page_text and page_text.strip():
+                    pages_text.append(page_text.strip())
+            except Exception:
+                continue  # skip unreadable pages silently
+        return "\n".join(pages_text)
     except Exception as e:
+        st.error(f"PDF read error: {e}")
         return ""
 
 # ----------------------------------------------------------------------
