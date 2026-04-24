@@ -110,7 +110,7 @@ with tab_analyze:
                 st.error(f"PDF parse error: {e}")
 
     if st.button("🚀 Analyze Resume", type="primary"):
-    if not resume_text or not str(resume_text).strip():
+        if not resume_text or not str(resume_text).strip():
         st.warning("Please provide resume text")
     else:
         with st.spinner("AI is analyzing..."):
