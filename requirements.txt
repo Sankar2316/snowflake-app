@@ -1,4 +1,2 @@
-streamlit==1.50.0
-snowflake-connector-python[pandas]==3.12.0
-pandas==2.2.2
-PyPDF2==3.0.1
+streamlit==1.32.0
+pandas==2.0.3
