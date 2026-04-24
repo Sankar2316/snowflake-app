@@ -58,18 +58,18 @@ def call_analyze(resume_text, file_name):
 
 # 🔥 FIXED PDF FUNCTION
 def extract_pdf_text(file_bytes: bytes) -> str:
-    reader = PdfReader(io.BytesIO(file_bytes))
-    text = ""
+    try:
+        reader = PdfReader(io.BytesIO(file_bytes))
+        text = ""
 
-    for page in reader.pages:
-        try:
+        for page in reader.pages:
             page_text = page.extract_text()
-            if page_text:
-                text += page_text + "\n"
-        except:
-            pass
+            if page_text is not None:
+                text += str(page_text) + "\n"
 
-    return text
+        return text if text else ""
+    except Exception as e:
+        return ""
 
 # ----------------------------------------------------------------------
 # UI
@@ -109,22 +109,29 @@ with tab_analyze:
             except Exception as e:
                 st.error(f"PDF parse error: {e}")
 
-    if st.button(
-        "🚀 Analyze Resume",
-        type="primary",
-        disabled=not resume_text or not resume_text.strip()
-    ):
+    if st.button("🚀 Analyze Resume", type="primary"):
+    if not resume_text or not str(resume_text).strip():
+        st.warning("Please provide resume text")
+    else:
         with st.spinner("AI is analyzing..."):
             try:
                 result = call_analyze(resume_text, file_name)
+
+                if result is None:
+                    result = {}
+
                 st.session_state["last_analysis"] = result
                 st.success("Analysis complete!")
+
             except Exception as e:
                 st.error(f"Error: {e}")
-
     # Render results
-    if "last_analysis" in st.session_state and st.session_state["last_analysis"]:
-        a = st.session_state["last_analysis"]
+    if "last_analysis" in st.session_state:
+    a = st.session_state["last_analysis"]
+
+    if not a or not isinstance(a, dict):
+        st.error("No valid analysis data received")
+    else:
         if isinstance(a, str):
             a = json.loads(a)
 
