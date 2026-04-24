@@ -4,7 +4,7 @@ import json
 import streamlit as st
 import pandas as pd
 import snowflake.connector
-from PyPDF2 import PdfReader
+import pdfplumber
 
 # ----------------------------------------------------------------------
 # Page config
@@ -31,6 +31,7 @@ def get_connection():
         client_session_keep_alive=True,
     )
 
+
 def run_query(sql, params=None):
     conn = get_connection()
     cur = conn.cursor()
@@ -42,6 +43,7 @@ def run_query(sql, params=None):
     finally:
         cur.close()
 
+
 def call_analyze(resume_text, file_name):
     conn = get_connection()
     cur = conn.cursor()
@@ -52,25 +54,42 @@ def call_analyze(resume_text, file_name):
         )
         row = cur.fetchone()
         raw = row[0] if row else None
+        if raw is None:
+            return {}
         return json.loads(raw) if isinstance(raw, str) else raw
     finally:
         cur.close()
 
+
+# ----------------------------------------------------------------------
+# PDF extraction — pdfplumber (no NoneType / .find() errors)
+# ----------------------------------------------------------------------
 def extract_pdf_text(file_bytes: bytes) -> str:
+    pages_text = []
     try:
-        reader = PdfReader(io.BytesIO(file_bytes))
-        pages_text = []
-        for i, page in enumerate(reader.pages):
-            try:
-                page_text = page.extract_text() or ""
-                if page_text and page_text.strip():
-                    pages_text.append(page_text.strip())
-            except Exception:
-                continue  # skip unreadable pages silently
-        return "\n".join(pages_text)
+        with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+            for page in pdf.pages:
+                try:
+                    text = page.extract_text()
+                    if text and text.strip():
+                        pages_text.append(text.strip())
+                except Exception:
+                    continue  # skip individual broken pages
     except Exception as e:
         st.error(f"PDF read error: {e}")
         return ""
+    return "\n\n".join(pages_text)
+
+
+# ----------------------------------------------------------------------
+# Helpers
+# ----------------------------------------------------------------------
+def safe_list(val):
+    return val if isinstance(val, list) else []
+
+def safe_dict(val):
+    return val if isinstance(val, dict) else {}
+
 
 # ----------------------------------------------------------------------
 # UI
@@ -82,7 +101,7 @@ tab_analyze, tab_past, tab_dash = st.tabs(
     ["🔍 Analyze Resume", "📋 Past Analyses", "📊 Dashboard"]
 )
 
-# ---------------- TAB 1: Analyze ----------------
+# ── TAB 1: Analyze ────────────────────────────────────────────────────
 with tab_analyze:
     st.subheader("Analyze a new resume")
     mode = st.radio("Input method", ["Paste text", "Upload PDF"], horizontal=True)
@@ -93,97 +112,129 @@ with tab_analyze:
     if mode == "Paste text":
         file_name = st.text_input("Candidate / file name", value="resume.txt")
         resume_text = st.text_area("Paste resume text here", height=300)
+
     else:
         uploaded = st.file_uploader("Upload PDF resume", type=["pdf"])
         if uploaded is not None:
             file_name = uploaded.name
-            try:
+            with st.spinner("Reading PDF..."):
                 resume_text = extract_pdf_text(uploaded.getvalue())
-                if resume_text:
-                    st.success(f"Extracted {len(resume_text)} characters from {uploaded.name}")
-                    with st.expander("Preview extracted text"):
-                        st.text(resume_text[:2000] + ("..." if len(resume_text) > 2000 else ""))
-                else:
-                    st.warning("No readable text found in PDF")
-            except Exception as e:
-                st.error(f"PDF parse error: {e}")
 
+            if resume_text:
+                st.success(f"Extracted {len(resume_text):,} characters from {uploaded.name}")
+                with st.expander("Preview extracted text"):
+                    st.text(resume_text[:2000] + ("..." if len(resume_text) > 2000 else ""))
+            else:
+                st.warning("No readable text found. The PDF may be image-based (scanned).")
+
+    # ── Analyze button ──
     if st.button("🚀 Analyze Resume", type="primary"):
-        if not resume_text or not str(resume_text).strip():  # FIX 1: corrected indentation
-            st.warning("Please provide resume text")
+        if not resume_text or not resume_text.strip():
+            st.warning("Please provide resume text before analyzing.")
         else:
-            with st.spinner("AI is analyzing..."):
+            with st.spinner("AI is analyzing the resume..."):
                 try:
                     result = call_analyze(resume_text, file_name)
-                    if result is None:
+                    if not isinstance(result, dict):
                         result = {}
                     st.session_state["last_analysis"] = result
                     st.success("Analysis complete!")
                 except Exception as e:
-                    st.error(f"Error: {e}")
+                    st.error(f"Analysis error: {e}")
 
-    # Render results
-    if "last_analysis" in st.session_state:  # FIX 2: corrected indentation
+    # ── Render results ──
+    if "last_analysis" in st.session_state:
         a = st.session_state["last_analysis"]
 
         if not a or not isinstance(a, dict):
-            st.error("No valid analysis data received")
+            st.error("No valid analysis data received.")
         else:
             if isinstance(a, str):
-                a = json.loads(a)
+                try:
+                    a = json.loads(a)
+                except json.JSONDecodeError:
+                    st.error("Could not parse analysis response.")
+                    st.stop()
 
             st.divider()
+
+            # Top metrics
             c1, c2, c3 = st.columns(3)
-            c1.metric("Candidate", a.get("name", "N/A"))
-            c2.metric("Experience", a.get("experience_level", "N/A"))
-            c3.metric("Skills found", len(a.get("skills", [])))
+            c1.metric("Candidate",    a.get("name", "N/A"))
+            c2.metric("Experience",   a.get("experience_level", "N/A"))
+            c3.metric("Skills found", len(safe_list(a.get("skills"))))
 
+            # Recommended roles
             st.subheader("🎯 Recommended Roles")
-            for r in a.get("recommended_roles", []):
-                score_str = str(r.get("match_score", "0")).replace("%", "").strip()
+            for r in safe_list(a.get("recommended_roles")):
+                if not isinstance(r, dict):
+                    continue
+                score_raw = str(r.get("match_score", "0")).replace("%", "").strip()
                 try:
-                    score = int(float(score_str))
-                except:
+                    score = min(max(int(float(score_raw)), 0), 100)
+                except (ValueError, TypeError):
                     score = 0
-                st.progress(min(max(score, 0), 100) / 100,
-                            text=f"**{r.get('role')}** — {r.get('match_score')}")
+                st.progress(
+                    score / 100,
+                    text=f"**{r.get('role', 'Unknown')}** — {r.get('match_score', 'N/A')}",
+                )
 
+            # Two-column detail
             col_a, col_b = st.columns(2)
+
             with col_a:
                 st.subheader("💪 Strengths")
-                for s in a.get("strengths", []):
+                for s in safe_list(a.get("strengths")):
                     st.write(f"- {s}")
+
                 st.subheader("🛠️ Skills")
-                st.write(", ".join(a.get("skills", [])))
+                skills = safe_list(a.get("skills"))
+                st.write(", ".join(skills) if skills else "N/A")
+
                 st.subheader("🏅 Certifications")
-                for c in a.get("certifications", []):
-                    st.write(f"- {c}")
+                certs = safe_list(a.get("certifications"))
+                if certs:
+                    for cert in certs:
+                        st.write(f"- {cert}")
+                else:
+                    st.write("None listed")
+
             with col_b:
                 st.subheader("⚠️ Weaknesses / Improvements")
-                for w in a.get("weaknesses", []):
+                for w in safe_list(a.get("weaknesses")):
                     st.write(f"- {w}")
-                st.subheader("📂 Key Projects")
-                for p in a.get("key_projects", []):
-                    st.write(f"- {p}")
 
+                st.subheader("📂 Key Projects")
+                projects = safe_list(a.get("key_projects"))
+                if projects:
+                    for p in projects:
+                        st.write(f"- {p}")
+                else:
+                    st.write("None listed")
+
+            # Interview questions
             st.subheader("❓ Interview Questions")
             q1, q2 = st.columns(2)
+            iq = safe_dict(a.get("interview_questions"))
+
             with q1:
                 st.markdown("**Technical**")
-                for q in a.get("interview_questions", {}).get("technical", []):
-                    st.write(f"- {q}")
-            with q2:
-                st.markdown("**HR**")
-                for q in a.get("interview_questions", {}).get("hr", []):
+                for q in safe_list(iq.get("technical")):
                     st.write(f"- {q}")
 
+            with q2:
+                st.markdown("**HR**")
+                for q in safe_list(iq.get("hr")):
+                    st.write(f"- {q}")
+
+            # Summary
             st.subheader("📝 Final Evaluation Summary")
-            st.info(a.get("summary", ""))
+            st.info(a.get("summary", "No summary available."))
 
             with st.expander("🔎 Raw JSON"):
                 st.json(a)
 
-# ---------------- TAB 2 ----------------
+# ── TAB 2: Past analyses ───────────────────────────────────────────────
 with tab_past:
     st.subheader("Past resume analyses")
     try:
@@ -193,15 +244,20 @@ with tab_past:
             ORDER BY analyzed_at DESC
             LIMIT 100
         """)
-        st.dataframe(df, use_container_width=True)
+        if df.empty:
+            st.info("No past analyses found.")
+        else:
+            st.dataframe(df, use_container_width=True)
     except Exception as e:
         st.error(f"Error loading past analyses: {e}")
 
-# ---------------- TAB 3 ----------------
+# ── TAB 3: Dashboard ───────────────────────────────────────────────────
 with tab_dash:
     st.subheader("Candidate analytics")
     try:
-        total_df = run_query("SELECT COUNT(*) AS C FROM RESUME_ANALYTICS.PUBLIC.RESUME_ANALYSIS")
+        total_df = run_query(
+            "SELECT COUNT(*) AS C FROM RESUME_ANALYTICS.PUBLIC.RESUME_ANALYSIS"
+        )
         total = int(total_df.iloc[0, 0])
         st.metric("Total resumes analyzed", total)
 
@@ -210,7 +266,10 @@ with tab_dash:
                 SELECT experience_level, COUNT(*) AS cnt
                 FROM RESUME_ANALYTICS.PUBLIC.RESUME_ANALYSIS
                 GROUP BY experience_level
+                ORDER BY cnt DESC
             """)
             st.bar_chart(exp_df.set_index("EXPERIENCE_LEVEL"))
+        else:
+            st.info("No data yet. Analyze some resumes first!")
     except Exception as e:
         st.error(f"Dashboard error: {e}")
