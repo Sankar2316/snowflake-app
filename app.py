@@ -48,15 +48,42 @@ def call_analyze(resume_text, file_name):
     conn = get_connection()
     cur = conn.cursor()
     try:
+        # Use dollar-quoting to safely pass large text to Snowflake
+        safe_text = str(resume_text).replace("$$", "")
+        safe_name = str(file_name).replace("$$", "")
         cur.execute(
-            "CALL RESUME_ANALYTICS.PUBLIC.ANALYZE_RESUME(%s, %s)",
-            (resume_text, file_name),
+            f"CALL RESUME_ANALYTICS.PUBLIC.ANALYZE_RESUME($${safe_text}$$, $${safe_name}$$)"
         )
         row = cur.fetchone()
-        raw = row[0] if row else None
-        if raw is None:
+
+        if not row or row[0] is None:
             return {}
-        return json.loads(raw) if isinstance(raw, str) else raw
+
+        raw = row[0]
+
+        if isinstance(raw, dict):
+            return raw
+
+        if isinstance(raw, str):
+            raw = raw.strip()
+            if not raw:
+                return {}
+            # Strip markdown code fences if Cortex wraps response in backticks
+            if raw.startswith("```"):
+                parts = raw.split("```")
+                raw = parts[1] if len(parts) > 1 else raw
+                if raw.lower().startswith("json"):
+                    raw = raw[4:].strip()
+            return json.loads(raw)
+
+        return {}
+
+    except json.JSONDecodeError as e:
+        st.error(f"Failed to parse AI response as JSON: {e}")
+        return {}
+    except Exception as e:
+        st.error(f"Snowflake error: {e}")
+        return {}
     finally:
         cur.close()
 
