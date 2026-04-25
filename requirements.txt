@@ -3,3 +3,4 @@ pandas
 numpy
 snowflake-connector-python
 PyPDF2
+pdfplumber
