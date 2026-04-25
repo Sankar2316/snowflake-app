@@ -1,6 +1,3 @@
-streamlit
+streamlit==1.50.0
+snowflake-connector-python[pandas]
 pandas
-numpy
-snowflake-connector-python
-PyPDF2
-pdfplumber
